@@ -1,4 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Fix HyperOS FCM reconnection</string>
-    <string name="xposed_description">Remove HyperOS\'s restrictions on FCM connection-related broadcasts. System power consumption may increase when this module is enabled.</string>
+    <string name="apps_list_title">Apps</string>
+    <string name="common_back">Back</string>
+    <string name="exempt_mode_blacklist">Blacklist</string>
+    <string name="exempt_mode_blacklist_summary">FCM apps in the list are not exempt; all other FCM apps are exempt</string>
+    <string name="exempt_mode_default">Default</string>
+    <string name="exempt_mode_default_summary">Exempt all FCM apps</string>
+    <string name="exempt_mode_whitelist">Whitelist</string>
+    <string name="exempt_mode_whitelist_summary">Only FCM apps in the list are exempt</string>
+    <string name="fcm_apps_count">Selected %1$d / %2$d</string>
+    <string name="fcm_apps_empty">No apps supporting FCM push were found</string>
+    <string name="fcm_apps_no_match">No matching apps</string>
+    <string name="fcm_apps_search_hint">Search apps</string>
+    <string name="force_stop_list_title">Notification apps</string>
+    <string name="force_stop_section_title">Keep notifications when clearing recents</string>
+    <string name="misc_section_title">Miscellaneous</string>
+    <string name="notice_message">"This module only affects apps that support FCM push (apps declaring an FCM receive receiver); other apps are never affected.
+
+System apps that support FCM are always exempt and do not appear in this list.
+
+The two lists are independent.
+
+Changes take effect immediately. System power consumption may increase when this module is enabled."</string>
+    <string name="notice_title">About</string>
+    <string name="push_list_title">Push apps</string>
+    <string name="push_section_title">Push to stopped apps</string>
+    <string name="service_unavailable_message">Enable this module in LSPosed, then reopen this page. Settings cannot be changed until the service is available.</string>
+    <string name="service_unavailable_title">LSPosed service is not connected</string>
+    <string name="settings_title">Push wakeup</string>
+    <string name="show_launcher_icon_summary">When off, the module icon is hidden from the launcher; settings are still available from LSPosed Manager</string>
+    <string name="show_launcher_icon_title">Show launcher icon</string>
+    <string name="xposed_description">"Remove HyperOS's restrictions on FCM connection-related broadcasts. System power consumption may increase when this module is enabled."</string>
 </resources>

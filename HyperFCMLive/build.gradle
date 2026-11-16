@@ -1,9 +1,13 @@
 plugins {
     id 'com.android.application'
+    id 'org.jetbrains.kotlin.plugin.compose'
 }
 
 android {
+    namespace 'io.reF1nd.hyperos.fcmlive'
     compileSdk 37
+
+    buildFeatures { compose true }
 
     defaultConfig {
         applicationId namespace
@@ -18,25 +22,36 @@ android {
         localProperties.load(project.rootProject.file('local.properties').newDataInputStream())
     }
 
+    def signingProperties = [
+            storeFile: providers.environmentVariable('SIGNING_STORE_FILE').orElse(localProperties.getProperty('storeFile', '')).get(),
+            storePassword: providers.environmentVariable('SIGNING_STORE_PASSWORD').orElse(localProperties.getProperty('storePassword', '')).get(),
+            keyAlias: providers.environmentVariable('SIGNING_KEY_ALIAS').orElse(localProperties.getProperty('keyAlias', '')).get(),
+            keyPassword: providers.environmentVariable('SIGNING_KEY_PASSWORD').orElse(localProperties.getProperty('keyPassword', '')).get()
+    ]
+    def hasSigningConfig = signingProperties.values().any { !it.isEmpty() }
+    if (hasSigningConfig && signingProperties.values().any { it.isEmpty() }) {
+        throw new GradleException('Incomplete signing configuration: storeFile, storePassword, keyAlias and keyPassword are all required.')
+    }
+
     signingConfigs {
-        if (localProperties.getProperty("storeFile") != null) {
+        if (hasSigningConfig) {
             config {
-                storeFile project.rootProject.file(localProperties.getProperty("storeFile"))
-                storePassword localProperties.getProperty("storePassword")
-                keyAlias localProperties.getProperty("keyAlias")
-                keyPassword localProperties.getProperty("keyPassword")
+                storeFile project.rootProject.file(signingProperties.storeFile)
+                storePassword signingProperties.storePassword
+                keyAlias signingProperties.keyAlias
+                keyPassword signingProperties.keyPassword
             }
         }
     }
 
     buildTypes {
         debug {
-            if (localProperties.getProperty("storeFile") != null) {
+            if (hasSigningConfig) {
                 signingConfig signingConfigs.config
             }
         }
         release {
-            if (localProperties.getProperty("storeFile") != null) {
+            if (hasSigningConfig) {
                 signingConfig signingConfigs.config
             } else {
                 signingConfig signingConfigs.debug
@@ -68,7 +83,6 @@ android {
     }
 
     dependenciesInfo.includeInApk false
-    namespace 'io.github.howard20181.hyperos.fcmlive'
 }
 
 base {
@@ -78,7 +92,26 @@ base {
 dependencies {
     compileOnly 'androidx.annotation:annotation:1.10.0'
     compileOnly 'io.github.libxposed:api:102.0.0'
-//    implementation 'io.github.libxposed:service:102.0.0'
+    implementation 'io.github.libxposed:service:102.0.0'
     compileOnly project(":hiddenapi:stubs")
     implementation project(":hiddenapi:bridge")
+
+    implementation 'androidx.activity:activity-compose:1.13.0'
+    implementation 'androidx.compose.ui:ui:1.12.0'
+    implementation 'androidx.compose.foundation:foundation:1.12.0'
+    implementation 'androidx.compose.runtime:runtime:1.12.0'
+    implementation 'androidx.compose.runtime:runtime-saveable:1.12.0'
+    implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.9.4'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2'
+    implementation 'io.coil-kt.coil3:coil-compose:3.6.3'
+    implementation 'me.zhanghai.android.appiconloader:appiconloader:1.5.0'
+    implementation 'top.yukonga.miuix.kmp:miuix-ui:0.9.4'
+    implementation 'top.yukonga.miuix.kmp:miuix-preference:0.9.4'
+    implementation 'top.yukonga.miuix.kmp:miuix-icons:0.9.4'
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21
+    }
 }

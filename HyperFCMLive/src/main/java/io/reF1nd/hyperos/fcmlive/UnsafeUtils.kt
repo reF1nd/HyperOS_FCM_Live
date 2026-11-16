@@ -1,4 +1,4 @@
-package io.github.howard20181.hyperos.fcmlive
+package io.reF1nd.hyperos.fcmlive
 
 import android.annotation.SuppressLint
 import android.graphics.Point

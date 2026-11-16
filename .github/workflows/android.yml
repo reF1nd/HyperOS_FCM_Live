@@ -4,8 +4,12 @@ on:
   push:
     branches:
       - main
+      - reF1nd
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -23,31 +27,70 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Write key
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+      - name: Prepare signing key
+        id: signing
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/reF1nd')
+        shell: bash
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          ALIAS: ${{ secrets.ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          if [ ! -z "${{ secrets.SIGNING_KEY }}" ]; then
-          echo storePassword='${{ secrets.KEY_STORE_PASSWORD }}' >> local.properties
-          echo keyAlias='${{ secrets.ALIAS }}' >> local.properties
-          echo keyPassword='${{ secrets.KEY_PASSWORD }}' >> local.properties
-          echo storeFile='key.jks' >> local.properties
-          echo ${{ secrets.SIGNING_KEY }} | base64 --decode > key.jks
+          configured=0
+          for secret_name in SIGNING_KEY KEY_STORE_PASSWORD ALIAS KEY_PASSWORD; do
+            if [[ -n "${!secret_name}" ]]; then
+              ((configured += 1))
+            fi
+          done
+          if [[ "$configured" -eq 0 ]]; then
+            echo '::notice::No signing secrets configured; APKs will use a debug key.'
+            echo 'Signing: debug key (no signing secrets configured).' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
+          if [[ "$configured" -ne 4 ]]; then
+            echo '::error::Configure all four signing secrets: SIGNING_KEY, KEY_STORE_PASSWORD, ALIAS, KEY_PASSWORD.'
+            exit 1
+          fi
+          umask 077
+          printf '%s' "$SIGNING_KEY" | base64 --decode > "$RUNNER_TEMP/hyperfcm-signing.jks"
+          printf 'store_file=%s\n' "$RUNNER_TEMP/hyperfcm-signing.jks" >> "$GITHUB_OUTPUT"
+          echo 'Signing: configured keystore.' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' || (github.ref != 'refs/heads/main' && github.ref != 'refs/heads/reF1nd') }}
 
       - name: Build with Gradle
-        run: ./gradlew assemble
+        env:
+          SIGNING_STORE_FILE: ${{ steps.signing.outputs.store_file }}
+          SIGNING_STORE_PASSWORD: ${{ steps.signing.outputs.store_file != '' && secrets.KEY_STORE_PASSWORD || '' }}
+          SIGNING_KEY_ALIAS: ${{ steps.signing.outputs.store_file != '' && secrets.ALIAS || '' }}
+          SIGNING_KEY_PASSWORD: ${{ steps.signing.outputs.store_file != '' && secrets.KEY_PASSWORD || '' }}
+        run: ./gradlew --no-daemon :HyperFCMLive:assembleDebug :HyperFCMLive:assembleRelease :HyperFCMLive:lintDebug
+
+      - name: Remove signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/hyperfcm-signing.jks"
 
       - name: Upload release artifact
         uses: actions/upload-artifact@v7
         with:
           path: HyperFCMLive/build/outputs/apk/release/*.apk
           archive: false
+          if-no-files-found: error
 
       - name: Upload debug artifact
         uses: actions/upload-artifact@v7
         with:
           path: HyperFCMLive/build/outputs/apk/debug/*.apk
           archive: false
+          if-no-files-found: error
+
+      - name: Upload lint reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: lint-reports
+          path: HyperFCMLive/build/reports/lint-results-debug.*

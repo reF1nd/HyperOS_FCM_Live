@@ -6,12 +6,13 @@ updates:
       interval: daily
       time: "21:00"
     open-pull-requests-limit: 10
-    target-branch: main
+    target-branch: reF1nd
     registries:
       - maven-google
       - gradle-plugin
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: reF1nd
     schedule:
       interval: "weekly"
 

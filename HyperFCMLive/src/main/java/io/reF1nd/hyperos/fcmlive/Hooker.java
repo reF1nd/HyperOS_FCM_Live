@@ -1,8 +1,9 @@
-package io.github.howard20181.hyperos.fcmlive;
+package io.reF1nd.hyperos.fcmlive;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
@@ -19,6 +20,7 @@ import java.lang.reflect.Executable;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -35,6 +37,83 @@ public class Hooker extends XposedModule {
     private Pair<String, ClassLoader> param;
     private final Set<String> hookedIds = new HashSet<>();
 
+    // Exemption settings, synced from the module's RemotePreferences.
+    private volatile String pushMode = ExemptConfig.DEFAULT;
+    private volatile Set<String> pushPackages = Collections.emptySet();
+    private volatile String forceStopMode = ExemptConfig.DEFAULT;
+    private volatile Set<String> forceStopPackages = Collections.emptySet();
+    private volatile Context systemContext;
+    private SharedPreferences remotePreferences;
+    private final SharedPreferences.OnSharedPreferenceChangeListener settingsListener =
+            (preferences, key) -> reloadSettings(preferences);
+
+    private void initializeSettings() {
+        try {
+            var preferences = getRemotePreferences(ExemptConfig.PREFERENCES_NAME);
+            reloadSettings(preferences);
+            if (remotePreferences != preferences) {
+                if (remotePreferences != null) {
+                    remotePreferences.unregisterOnSharedPreferenceChangeListener(settingsListener);
+                }
+                remotePreferences = preferences;
+                preferences.registerOnSharedPreferenceChangeListener(settingsListener);
+            }
+        } catch (Throwable tr) {
+            log(Log.ERROR, TAG, "Failed to initialize settings", tr);
+        }
+    }
+
+    private void reloadSettings(SharedPreferences preferences) {
+        try {
+            pushMode = ExemptConfig.normalizeMode(preferences.getString(ExemptConfig.PUSH_MODE, ExemptConfig.DEFAULT));
+            pushPackages = copyPackages(preferences.getStringSet(ExemptConfig.PUSH_PACKAGES, Collections.emptySet()));
+            forceStopMode = ExemptConfig.normalizeMode(preferences.getString(ExemptConfig.FORCE_STOP_MODE, ExemptConfig.DEFAULT));
+            forceStopPackages = copyPackages(preferences.getStringSet(ExemptConfig.FORCE_STOP_PACKAGES, Collections.emptySet()));
+        } catch (Throwable tr) {
+            log(Log.ERROR, TAG, "Failed to reload settings", tr);
+        }
+    }
+
+    private static Set<String> copyPackages(Set<String> packages) {
+        return packages == null || packages.isEmpty() ? Collections.emptySet()
+                : Collections.unmodifiableSet(new HashSet<>(packages));
+    }
+
+    private boolean isFcmApp(PackageManager pm, String packageName) {
+        try {
+            var intent = new Intent(ACTION_REMOTE_INTENT);
+            intent.setPackage(packageName);
+            return !pm.queryBroadcastReceivers(intent, 0).isEmpty();
+        } catch (Throwable tr) {
+            log(Log.ERROR, TAG, "Failed to query FCM receivers of " + packageName, tr);
+            return false;
+        }
+    }
+
+    private static boolean isSystemApp(ApplicationInfo info) {
+        return info != null && (info.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
+    }
+
+    private boolean shouldExemptPackage(String mode, Set<String> packages, String packageName) {
+        try {
+            var context = systemContext;
+            if (context == null) return false;
+            var pm = context.getPackageManager();
+            if (pm == null) return false;
+            ApplicationInfo info;
+            try {
+                info = pm.getApplicationInfo(packageName, 0);
+            } catch (PackageManager.NameNotFoundException ignored) {
+                info = null;
+            }
+            return ExemptConfig.shouldExempt(mode, packages, packageName,
+                    isFcmApp(pm, packageName), isSystemApp(info));
+        } catch (Throwable tr) {
+            log(Log.ERROR, TAG, "Failed to evaluate exemption of " + packageName, tr);
+            return false;
+        }
+    }
+
     private HookBuilder hookE(Executable executable) {
         var builder = hook(executable);
 
@@ -50,6 +129,7 @@ public class Hooker extends XposedModule {
     @Override
     public void onModuleLoaded(@NonNull ModuleLoadedParam param) {
         UnsafeUtils.INSTANCE.setXposedModule(this);
+        initializeSettings();
     }
 
     @Override
@@ -148,6 +228,7 @@ public class Hooker extends XposedModule {
     @Override
     public void onHotReloaded(@NonNull HotReloadedParam param) {
         UnsafeUtils.INSTANCE.setXposedModule(this);
+        initializeSettings();
         var isSystemServer = param.isSystemServer();
         if (param.getSavedInstanceState() instanceof Pair<?, ?> pair
                 && pair.first instanceof String packageName
@@ -522,15 +603,26 @@ public class Hooker extends XposedModule {
                         && getInvoker(getRecordMethod).invoke(chain.getThisObject(), chain.getArg(0)) instanceof Object app
                         && infoField.get(app) instanceof ApplicationInfo info
                         && GMS_PACKAGE_NAME.equals(info.packageName)) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-                            && intent.getPackage() instanceof String packageName
-                            && mContextField.get(chain.getThisObject()) instanceof Context mContext) {
-                        getPowerExemptionManager(mContext).addToTemporaryAllowList(
-                                packageName, 102 /* PowerExemptionManager.REASON_PUSH_MESSAGING_OVER_QUOTA */,
-                                "GOOGLE_C2DM", 2000);
+                    if (systemContext == null) {
+                        try {
+                            if (mContextField.get(chain.getThisObject()) instanceof Context mContext) {
+                                systemContext = mContext;
+                            }
+                        } catch (Exception e) {
+                            log(Log.ERROR, TAG, "Failed to get ActivityManagerService.mContext", e);
+                        }
                     }
-                    if ((intent.getFlags() & Intent.FLAG_INCLUDE_STOPPED_PACKAGES) == 0) {
-                        intent.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES);
+                    var packageName = intent.getPackage();
+                    if (packageName != null && shouldExemptPackage(pushMode, pushPackages, packageName)) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+                                && systemContext instanceof Context context) {
+                            getPowerExemptionManager(context).addToTemporaryAllowList(
+                                    packageName, 102 /* PowerExemptionManager.REASON_PUSH_MESSAGING_OVER_QUOTA */,
+                                    "GOOGLE_C2DM", 2000);
+                        }
+                        if ((intent.getFlags() & Intent.FLAG_INCLUDE_STOPPED_PACKAGES) == 0) {
+                            intent.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES);
+                        }
                     }
                 }
             }
@@ -566,12 +658,18 @@ public class Hooker extends XposedModule {
         // boolean isForceStopEnable(ProcessRecord app, int policy, ProcessManagerService pms)
         var isForceStopEnableMethod = ProcessCleanerBaseClass.getDeclaredMethod("isForceStopEnable", ProcessRecordClass, int.class, ProcessManagerServiceClass);
         hookE(isForceStopEnableMethod).intercept(chain -> {
-            if (chain.getArg(1) instanceof Integer policy && policy != 13 && mPkms.get(chain.getArg(2)) instanceof PackageManager pm) {
-                var info = (ApplicationInfo) getInvoker(mGetApplicationInfo).invoke(chain.getArg(0));
-                var intent = new Intent(ACTION_REMOTE_INTENT);
-                intent.setPackage(info.packageName);
-                var isPushApp = !pm.queryBroadcastReceivers(intent, 0).isEmpty();
-                if (isPushApp) return false;
+            if (chain.getArg(1) instanceof Integer policy && policy != 13) {
+                try {
+                    if (mPkms.get(chain.getArg(2)) instanceof PackageManager pm
+                            && getInvoker(mGetApplicationInfo).invoke(chain.getArg(0)) instanceof ApplicationInfo info
+                            && info.packageName != null
+                            && ExemptConfig.shouldExempt(forceStopMode, forceStopPackages, info.packageName,
+                            isFcmApp(pm, info.packageName), isSystemApp(info))) {
+                        return false;
+                    }
+                } catch (Exception e) {
+                    log(Log.ERROR, TAG, "Failed to evaluate exemption for force stop", e);
+                }
             }
             return chain.proceed();
         });

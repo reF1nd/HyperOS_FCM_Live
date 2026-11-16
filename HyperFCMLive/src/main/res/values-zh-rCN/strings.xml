@@ -1,5 +1,35 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">修复澎湃系统谷歌推送重连</string>
+    <string name="apps_list_title">应用列表</string>
+    <string name="common_back">返回</string>
+    <string name="exempt_mode_blacklist">黑名单</string>
+    <string name="exempt_mode_blacklist_summary">名单内的 FCM 应用不放行，其余放行</string>
+    <string name="exempt_mode_default">默认放行</string>
+    <string name="exempt_mode_default_summary">对所有 FCM 应用放行</string>
+    <string name="exempt_mode_whitelist">白名单</string>
+    <string name="exempt_mode_whitelist_summary">仅名单内的 FCM 应用放行</string>
+    <string name="fcm_apps_count">已选 %1$d / 共 %2$d</string>
+    <string name="fcm_apps_empty">未找到支持 FCM 推送的应用</string>
+    <string name="fcm_apps_no_match">未找到匹配的应用</string>
+    <string name="fcm_apps_search_hint">搜索应用</string>
+    <string name="force_stop_list_title">保留通知的应用</string>
+    <string name="force_stop_section_title">清除最近任务卡片时保留通知</string>
+    <string name="misc_section_title">杂项</string>
+    <string name="notice_message">"本模块只影响支持 FCM 推送的应用（声明了 FCM 接收广播的应用），其它应用完全不受影响。
+
+支持 FCM 的系统应用已自动放行，不会出现在此列表中。
+
+两套名单相互独立。
+
+设置修改即时生效；启用模块后系统耗电可能会增加。"</string>
+    <string name="notice_title">说明</string>
+    <string name="push_list_title">允许推送的应用</string>
+    <string name="push_section_title">允许推送到已停止的应用</string>
+    <string name="service_unavailable_message">请在 LSPosed 中启用本模块，然后重新打开此页面。服务不可用期间无法修改设置。</string>
+    <string name="service_unavailable_title">LSPosed 服务未连接</string>
+    <string name="settings_title">推送唤醒</string>
+    <string name="show_launcher_icon_summary">关闭后从桌面隐藏本模块图标，仍可从 LSPosed 管理器进入设置</string>
+    <string name="show_launcher_icon_title">显示桌面图标</string>
     <string name="xposed_description">去除澎湃系统对谷歌推送连接相关广播的限制。启用模块后，系统耗电可能会增加。</string>
 </resources>
