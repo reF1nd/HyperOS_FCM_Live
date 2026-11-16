@@ -114,7 +114,7 @@ public class Hooker extends XposedModule {
         }
     }
 
-    private HookBuilder hookE(Executable executable) {
+    HookBuilder hookE(Executable executable) {
         var builder = hook(executable);
 
         if (getApiVersion() >= 102) {
@@ -189,6 +189,7 @@ public class Hooker extends XposedModule {
         } catch (Exception e) {
             log(Log.ERROR, TAG, "Failed to hook ProcessCleanerBase", e);
         }
+        new PowerCompatibility(this, classLoader).installSystemHooks();
     }
 
     @Override
@@ -216,6 +217,7 @@ public class Hooker extends XposedModule {
             } catch (Exception e) {
                 log(Log.ERROR, TAG, "Failed to hook GlobalFeatureConfigureHelper", e);
             }
+            new PowerCompatibility(this, classLoader).installSleepWhitelist();
         }
     }
 
@@ -304,24 +306,7 @@ public class Hooker extends XposedModule {
         } catch (Exception e) {
             log(Log.ERROR, TAG, "Failed to hook GreezeManagerService#deferBroadcastForMiui", e);
         }
-        Method triggerGMSLimitActionMethod;
-        try {
-            triggerGMSLimitActionMethod = GreezeManagerServiceClass.getDeclaredMethod("triggerGMSLimitAction", boolean.class);
-        } catch (NoSuchMethodException ignored) {
-            triggerGMSLimitActionMethod = GreezeManagerServiceClass.getDeclaredMethod("triggerGMSLimitAction");
-        }
-        hookE(triggerGMSLimitActionMethod).intercept(chain -> {
-            if (!chain.getArgs().isEmpty()) {
-                var args = chain.getArgs().toArray();
-                args[0] = false;
-                return chain.proceed(args);
-            } else {
-                var mGmsLimitEnabled = GreezeManagerServiceClass.getDeclaredField("mGmsLimitEnabled");
-                UnsafeUtils.INSTANCE.setBooleanField(mGmsLimitEnabled, chain.getThisObject(), false);
-                return chain.proceed();
-            }
-        });
-        deoptimize(triggerGMSLimitActionMethod);
+        // Install version-specific GMS limit hooks independently in PowerCompatibility.
     }
 
     private void hookDomesticPolicyManager(ClassLoader classLoader) throws ClassNotFoundException,
@@ -468,31 +453,8 @@ public class Hooker extends XposedModule {
         }
     }
 
-    private void hookGmsObserver(ClassLoader classLoader) throws ClassNotFoundException,
-            NoSuchMethodException {
-        var NetdExecutorClass = classLoader.loadClass("com.miui.powerkeeper.utils.NetdExecutor");
-        var initGmsChainMethod = NetdExecutorClass.getDeclaredMethod("initGmsChain", String.class, int.class, String.class);
-        hookE(initGmsChainMethod).intercept(chain -> {
-            var args = chain.getArgs().toArray();
-            args[2] = "ACCEPT";
-            return chain.proceed(args);
-        });
-        deoptimize(initGmsChainMethod);
-        var GmsObserverClass = classLoader.loadClass("com.miui.powerkeeper.utils.GmsObserver");
-        Hooker hooker = chain -> {
-            var args = chain.getArgs().toArray();
-            args[0] = false;
-            return chain.proceed(args);
-        };
-        var updateGmsAlarmMethod = GmsObserverClass.getDeclaredMethod("updateGmsAlarm", boolean.class);
-        hookE(updateGmsAlarmMethod).intercept(hooker);
-        deoptimize(updateGmsAlarmMethod);
-        var updateGmsNetWorkMethod = GmsObserverClass.getDeclaredMethod("updateGmsNetWork", boolean.class);
-        hookE(updateGmsNetWorkMethod).intercept(hooker);
-        deoptimize(updateGmsNetWorkMethod);
-        var updateGoogleReletivesWakelockMethod = GmsObserverClass.getDeclaredMethod("updateGoogleReletivesWakelock", boolean.class);
-        hookE(updateGoogleReletivesWakelockMethod).intercept(hooker);
-        deoptimize(updateGoogleReletivesWakelockMethod);
+    private void hookGmsObserver(ClassLoader classLoader) {
+        new PowerCompatibility(this, classLoader).installGmsObserver();
     }
 
     private void hookGlobalFeatureConfigureHelper(ClassLoader classLoader)
@@ -502,10 +464,7 @@ public class Hooker extends XposedModule {
         hookE(getDozeWhiteListAppsMethod).intercept(chain -> {
             var result = chain.proceed();
             if (result instanceof List<?>) {
-                var whiteList = (List<String>) result;
-                if (!whiteList.contains(GMS_PACKAGE_NAME)) {
-                    whiteList.add(GMS_PACKAGE_NAME);
-                }
+                return CompatibilityPolicy.addToDozeWhitelist((List<String>) result);
             }
             return result;
         });
