@@ -5,6 +5,7 @@ import android.util.Log;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.IntPredicate;
@@ -147,6 +148,7 @@ final class PowerCompatibility {
     }
 
     void installSystemHooks() {
+        installSleepVpnHook(SleepVpn::ownerForUid);
         install("Greeze network status", () -> forceLimitOff(GREEZE, "updateGmsNetStatus", boolean.class));
         install("Greeze initial GMS limit", () -> {
             var owner = type(GREEZE);
@@ -208,6 +210,49 @@ final class PowerCompatibility {
         deoptimizeCallers("com.android.server.power.PowerManagerService", "setWakeLockDisabledStateLocked");
         deoptimizeCallers("com.miui.server.smartpower.AppWakelockResource", "setWakeLockState");
         deoptimizeCallers(POWER_STUB, "isWakelockDisabledByPolicy");
+    }
+
+    @FunctionalInterface
+    interface VpnOwnerLookup {
+        int ownerForUid(int uid) throws ReflectiveOperationException;
+    }
+
+    void installSleepVpnHook(VpnOwnerLookup vpn) {
+        String owner = "com.android.server.net.MiuiNetworkPolicyManagerService";
+        install("night sleep VPN whitelist", () -> {
+            var apply = method(owner, "setSleepModeWhitelistUidRules", void.class);
+            var whitelist = field(type(owner), "mSleepModeWhitelistUids");
+            if (!Set.class.isAssignableFrom(whitelist.getType())) throw new NoSuchFieldException(whitelist.toString());
+            module.hookE(apply).intercept(chain -> {
+                try {
+                    @SuppressWarnings("unchecked")
+                    var uids = (Set<Integer>) whitelist.get(chain.getThisObject());
+                    // The vendor handler applies this set on entry and removes the same UIDs on exit.
+                    // Only consider GMS UIDs already admitted for this sleep cycle.
+                    for (int uid : new ArrayList<>(uids)) {
+                        if (!gmsUid.test(uid)) continue;
+                        try {
+                            int ownerUid = vpn.ownerForUid(uid);
+                            if (ownerUid >= 0) {
+                                boolean added = uids.add(ownerUid);
+                                module.log(Log.INFO, TAG, "Night sleep VPN exemption: GMS uid=" + uid
+                                        + ", VPN owner uid=" + ownerUid + ", added=" + added);
+                            } else {
+                                module.log(Log.INFO, TAG, "Night sleep: no app VPN for GMS uid=" + uid);
+                            }
+                        } catch (ReflectiveOperationException | RuntimeException error) {
+                            callbackError("night sleep VPN lookup", error);
+                        }
+                    }
+                } catch (ReflectiveOperationException | RuntimeException error) {
+                    callbackError("night sleep VPN whitelist", error);
+                }
+                return chain.proceed();
+            });
+            // The OS4 sleep receiver calls the private method through a synthetic accessor.
+            deoptimizeCallers(owner, "-$$Nest$msetSleepModeWhitelistUidRules");
+            deoptimizeCallers(owner + "$45", "onReceive");
+        });
     }
 
     private void installUidDecision(String feature, String name, boolean result, int uidIndex,

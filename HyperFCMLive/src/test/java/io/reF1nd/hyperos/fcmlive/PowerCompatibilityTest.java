@@ -11,6 +11,8 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import static org.junit.Assert.*;
 
 /** Registration and callbacks against deliberately different firmware interfaces. */
@@ -37,6 +39,10 @@ public class PowerCompatibilityTest {
         String[] getCloudAppsNetWhiteListOfEarthquakeWarn() { return null; }
         void whitelistCloudAppsForEarthquakeWarning() { }
         void applySleepConfig(SleepState state) { }
+    }
+    public static class SleepNetworkPolicy {
+        private final Set<Integer> mSleepModeWhitelistUids = new LinkedHashSet<>();
+        private void setSleepModeWhitelistUidRules() {}
     }
     public static class PackageUtil {
         static final Map<String, Integer> installed = new HashMap<>();
@@ -119,6 +125,7 @@ public class PowerCompatibilityTest {
                 case "com.miui.powerkeeper.statemachine.PhoneSleepModeController$SleepState" -> SleepController.SleepState.class;
                 case "com.miui.powerkeeper.utils.PackageUtil" -> PackageUtil.class;
                 case "com.miui.whetstone.PowerKeeperPolicy" -> Policy.class;
+                case "com.android.server.net.MiuiNetworkPolicyManagerService" -> SleepNetworkPolicy.class;
                 case "com.android.server.alarm.Alarm" -> Alarm.class;
                 case "com.android.server.alarm.AlarmManagerServiceStubImpl" -> AlarmStub.class;
                 case "com.android.server.power.PowerManagerServiceImpl" -> PowerStub.class;
@@ -292,6 +299,64 @@ public class PowerCompatibilityTest {
         fw.canDeoptimize = false;
         new PowerCompatibility(fw.module, new Firmware(CurrentObserver.class, false)).installSleepWhitelist();
         assertTrue(fw.hooks.isEmpty());
+    }
+
+    @Test public void addsOnlyTheOwnerOfTheNetworkSelectedForEachWhitelistedGmsUid() throws Throwable {
+        var fw = new Framework(102);
+        var routes = new HashMap<Integer, Integer>();
+        var ownerGms = 10138;
+        var profileGms = 1010138;
+        var vpnOwner = 10530;
+        var profileVpnOwner = 1010530;
+        routes.put(ownerGms, vpnOwner);
+        var lookupUids = new LinkedHashSet<Integer>();
+        new PowerCompatibility(fw.module, new Firmware(CurrentObserver.class, false),
+                uid -> uid == ownerGms || uid == profileGms).installSleepVpnHook(uid -> {
+                    lookupUids.add(uid);
+                    return routes.getOrDefault(uid, -1); // -1 includes direct / split-tunnel bypass.
+                });
+        var policy = new SleepNetworkPolicy();
+        var uids = policy.mSleepModeWhitelistUids;
+        var method = SleepNetworkPolicy.class.getDeclaredMethod("setSleepModeWhitelistUidRules");
+        var chain = new Chain(method, null);
+        chain.receiver = policy;
+        var hook = fw.allHooks.get(method);
+        hook.intercept(chain);
+        assertTrue(uids.isEmpty());
+        uids.add(1000);
+        hook.intercept(chain);
+        assertEquals(Set.of(1000), uids);
+        assertTrue(lookupUids.isEmpty());
+        uids.addAll(List.of(ownerGms, profileGms));
+        hook.intercept(chain);
+        assertEquals(Set.of(ownerGms, profileGms), lookupUids);
+        assertEquals(Set.of(1000, ownerGms, profileGms, vpnOwner), uids);
+
+        // Vendor clears this same set on exit. Next night only the profile uses its VPN.
+        uids.clear();
+        uids.addAll(List.of(ownerGms, profileGms, profileVpnOwner));
+        routes.clear();
+        routes.put(profileGms, profileVpnOwner);
+        hook.intercept(chain);
+        assertEquals(Set.of(ownerGms, profileGms, profileVpnOwner), uids);
+        assertEquals(4, chain.calls);
+    }
+
+    @Test public void missingVpnLookupKeepsVendorRulesAndOtherProfiles() throws Throwable {
+        var fw = new Framework(102);
+        new PowerCompatibility(fw.module, new Firmware(CurrentObserver.class, false),
+                uid -> uid == 10138 || uid == 1010138).installSleepVpnHook(uid -> {
+                    if (uid == 10138) throw new NoSuchMethodException("Firmware changed");
+                    return 1010530;
+                });
+        var policy = new SleepNetworkPolicy();
+        policy.mSleepModeWhitelistUids.addAll(List.of(1000, 10138, 1010138));
+        var method = SleepNetworkPolicy.class.getDeclaredMethod("setSleepModeWhitelistUidRules");
+        var chain = new Chain(method, null);
+        chain.receiver = policy;
+        fw.allHooks.get(method).intercept(chain);
+        assertEquals(Set.of(1000, 10138, 1010138, 1010530), policy.mSleepModeWhitelistUids);
+        assertEquals(1, chain.calls);
     }
 
     private Framework systemFramework() {
